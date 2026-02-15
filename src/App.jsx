@@ -417,7 +417,11 @@ function App() {
             <SlotBox key={box.id} position={getBoxPosition(box)} size={box.size} />
           ))}
 
-          <OrbitControls />
+          <OrbitControls
+            enablePan={true}
+            panSpeed={1.5}
+            screenSpacePanning={true}
+          />
           <gridHelper args={[10, 10]} />
         </Canvas>
       </div>
