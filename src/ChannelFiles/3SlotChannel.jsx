@@ -11,10 +11,10 @@ export const CHANNEL_3_SLOT_CONFIG = {
   maxBoxWidth: 4.2      // max box width with clearance
 }
 
-function Channel3Slot({ position = [0, 0, 0], onSlotClick, selectedSlot }) {
+function Channel3Slot({ position = [0, 0, 0], onSlotClick, selectedSlot, heightCm }) {
   // Convert config values to Three.js units
   const length = toUnits(CHANNEL_3_SLOT_CONFIG.length)
-  const height = toUnits(CHANNEL_3_SLOT_CONFIG.height)
+  const height = toUnits(heightCm ?? CHANNEL_3_SLOT_CONFIG.height)
   const wallThickness = toUnits(CHANNEL_3_SLOT_CONFIG.wallThickness)
   const slotWidth = toUnits(CHANNEL_3_SLOT_CONFIG.slotWidth)
   const numSlots = CHANNEL_3_SLOT_CONFIG.numSlots

@@ -14,7 +14,7 @@ const CHANNEL_CONFIGS = {
   '5-slot': CHANNEL_5_SLOT_CONFIG,
 }
 
-function ToolsPanel({ onAddBox, onRemoveBox, boxes = [], selectedSlot, numChannels = 2, channelTypes = [], savedLayouts = [], onSaveLayout, onLoadLayout, onDeleteLayout }) {
+function ToolsPanel({ onAddBox, onRemoveBox, boxes = [], selectedSlot, numChannels = 2, channelTypes = [], selectedChannelHeightCm = 7, getChannelHeightCm, savedLayouts = [], onSaveLayout, onLoadLayout, onDeleteLayout }) {
   const [layoutName, setLayoutName] = useState('')
   // selectedSlot is now { row: 0|1|2|..., channel: 0|1|2|..., slot: 0-4 } or null
   // Generate channel labels dynamically (A, B, C, D, ...)
@@ -73,7 +73,7 @@ function ToolsPanel({ onAddBox, onRemoveBox, boxes = [], selectedSlot, numChanne
   if (length <= 0) errors.push('Length must be greater than 0')
   if (selectedSlot !== null && length > remainingInSelected) errors.push(`Length exceeds remaining space in slot (${remainingInSelected.toFixed(1)}cm left)`)
   if (height <= 0) errors.push('Height must be greater than 0')
-  if (height > selectedChannelConfig.height) errors.push(`Height exceeds channel (max ${selectedChannelConfig.height}cm)`)
+  if (height > selectedChannelHeightCm) errors.push(`Height exceeds channel (max ${selectedChannelHeightCm}cm)`)
   if (width <= 0) errors.push('Width must be greater than 0')
   if (width > selectedChannelConfig.maxBoxWidth) errors.push(`Width exceeds slot (max ${selectedChannelConfig.maxBoxWidth}cm)`)
 
@@ -89,7 +89,8 @@ function ToolsPanel({ onAddBox, onRemoveBox, boxes = [], selectedSlot, numChanne
       for (let s = 0; s < numSlots; s++) {
         const remaining = getRemainingSpace(r, c, s)
         const isEmpty = remaining === config.length
-        if (length <= remaining) {
+        const cellHeightCm = getChannelHeightCm ? getChannelHeightCm(r, c) : config.height
+        if (length <= remaining && height <= cellHeightCm && width <= config.maxBoxWidth) {
           fitsInSlots.push({
             name: `${r + 1}-${channelLabels[c]}-${s + 1}`,
             remaining,

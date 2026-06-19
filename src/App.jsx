@@ -68,6 +68,9 @@ function App() {
   // Each column can have different number of rows
   const [channelTypes, setChannelTypes] = useState([])
   const [pendingChannelType, setPendingChannelType] = useState(null)  // { type: 'column' } or { type: 'row', column: number }
+  const [channelHeights, setChannelHeights] = useState([])  // channelHeights[col][row] = height in cm
+  const [pendingHeightEdit, setPendingHeightEdit] = useState(null)  // { row, column } | null
+  const [heightInputValue, setHeightInputValue] = useState('7')
 
   // Saved layouts - initialize from localStorage
   const [savedLayouts, setSavedLayouts] = useState(() => {
@@ -95,6 +98,7 @@ function App() {
       name,
       numChannels,
       channelTypes,
+      channelHeights,
       boxes,
       savedAt: new Date().toISOString()
     }
@@ -107,6 +111,7 @@ function App() {
     if (layout) {
       setNumChannels(layout.numChannels)
       setChannelTypes(layout.channelTypes)
+      setChannelHeights(layout.channelHeights || [])
       setBoxes(layout.boxes)
       setSelectedSlot(null)
     }
@@ -134,6 +139,14 @@ function App() {
     return CHANNEL_TYPES[type].width
   }
 
+  const getChannelHeightCm = (rowIndex, colIndex) => {
+    return channelHeights[colIndex]?.[rowIndex] ?? 7
+  }
+
+  const getChannelHeightUnits = (rowIndex, colIndex) => {
+    return getChannelHeightCm(rowIndex, colIndex) / 10
+  }
+
   // Calculate channel Z offsets dynamically based on number of channels and their types
   // From camera view: negative Z = RIGHT, positive Z = LEFT
   // Channel A starts on the right, each new channel added to the left
@@ -152,9 +165,15 @@ function App() {
     return offset
   }
 
-  // Calculate row Y position (row 0 at bottom, stacking upward)
-  const getRowYPosition = (rowIndex) => {
-    return 0.35 + rowIndex * (CHANNEL_HEIGHT + ROW_GAP)
+  // Calculate row Y position (always uses fixed visual height, row 0 at bottom)
+  const getRowYPosition = (rowIndex, colIndex = 0) => {
+    return CHANNEL_HEIGHT / 2 + rowIndex * (CHANNEL_HEIGHT + ROW_GAP)
+  }
+
+  // Y position of the top edge of a column's stack (above the highest row)
+  const getColumnTopY = (colIndex) => {
+    const topRow = getColumnRows(colIndex) - 1
+    return getRowYPosition(topRow) + CHANNEL_HEIGHT / 2
   }
 
   const channelZOffsets = Array.from({ length: numChannels }, (_, i) => getChannelZOffset(i))
@@ -167,8 +186,8 @@ function App() {
   // Actually add the channel (column) with selected type
   const handleConfirmAddChannel = (type) => {
     setNumChannels(prev => prev + 1)
-    // Add a new column with one row of the selected type
     setChannelTypes(prev => [...prev, [type]])
+    setChannelHeights(prev => [...prev, [7]])
     setPendingChannelType(null)
   }
 
@@ -178,6 +197,9 @@ function App() {
     const colIndex = pendingChannelType.column
     setChannelTypes(prev => prev.map((col, i) =>
       i === colIndex ? [...col, type] : col
+    ))
+    setChannelHeights(prev => prev.map((col, i) =>
+      i === colIndex ? [...(col || []), 7] : col
     ))
     setPendingChannelType(null)
   }
@@ -196,13 +218,59 @@ function App() {
       setSelectedSlot(null)
     }
     setNumChannels(prev => prev - 1)
-    // Remove last column
     setChannelTypes(prev => prev.slice(0, -1))
+    setChannelHeights(prev => prev.slice(0, -1))
   }
 
   // Show row type selection popup for a specific column
   const handleAddRowClick = (colIndex) => {
     setPendingChannelType({ type: 'row', column: colIndex })
+  }
+
+  // Show channel type selection popup to replace an existing cell
+  const handleSwapChannelClick = (rowIndex, colIndex) => {
+    setPendingChannelType({ type: 'replace', row: rowIndex, column: colIndex })
+  }
+
+  // Replace a channel cell's type and clear its boxes
+  const handleConfirmReplaceChannel = (newType) => {
+    if (!pendingChannelType || pendingChannelType.type !== 'replace') return
+    const { row: rowIndex, column: colIndex } = pendingChannelType
+    setChannelTypes(prev => prev.map((col, i) =>
+      i === colIndex ? col.map((r, j) => j === rowIndex ? newType : r) : col
+    ))
+    setBoxes(prev => prev.filter(box => !(box.channel === colIndex && box.row === rowIndex)))
+    if (selectedSlot?.channel === colIndex && selectedSlot?.row === rowIndex) {
+      setSelectedSlot(null)
+    }
+    setPendingChannelType(null)
+  }
+
+  const handleHeightButtonClick = (rowIndex, colIndex) => {
+    setPendingHeightEdit({ row: rowIndex, column: colIndex })
+    setHeightInputValue(String(getChannelHeightCm(rowIndex, colIndex)))
+  }
+
+  const handleConfirmHeightEdit = () => {
+    if (!pendingHeightEdit) return
+    const { row: rowIndex, column: colIndex } = pendingHeightEdit
+    const newHeight = parseFloat(heightInputValue)
+    if (isNaN(newHeight) || newHeight <= 0) return
+    setChannelHeights(prev => {
+      const updated = [...prev]
+      const colHeights = [...(updated[colIndex] || [])]
+      colHeights[rowIndex] = newHeight
+      updated[colIndex] = colHeights
+      return updated
+    })
+    setPendingHeightEdit(null)
+  }
+
+  // Route modal confirm to the right handler based on pending type
+  const handleConfirmChannelType = (type) => {
+    if (pendingChannelType?.type === 'column') handleConfirmAddChannel(type)
+    else if (pendingChannelType?.type === 'replace') handleConfirmReplaceChannel(type)
+    else handleConfirmAddRow(type)
   }
 
   // Remove the top row from a specific column
@@ -216,9 +284,11 @@ function App() {
     if (selectedSlot?.channel === colIndex && selectedSlot?.row === lastRowIndex) {
       setSelectedSlot(null)
     }
-    // Remove last row from this column
     setChannelTypes(prev => prev.map((col, i) =>
       i === colIndex ? col.slice(0, -1) : col
+    ))
+    setChannelHeights(prev => prev.map((col, i) =>
+      i === colIndex ? (col || []).slice(0, -1) : col
     ))
   }
 
@@ -269,8 +339,8 @@ function App() {
 
   // Calculate box position dynamically based on current channel offsets and row
   const getBoxPosition = (box) => {
-    const rowYBase = getRowYPosition(box.row) - 0.35  // Offset from channel center to floor
-    const yPosition = rowYBase + box.size[1] / 2  // Floor level + half height
+    const rowYBase = getRowYPosition(box.row) - CHANNEL_HEIGHT / 2
+    const yPosition = rowYBase + box.size[1] / 2
     const slotPositions = getSlotPositions(box.row, box.channel)
     const zPosition = slotPositions[box.slot] + channelZOffsets[box.channel]
     return [box.xPosition, yPosition, zPosition]
@@ -291,7 +361,7 @@ function App() {
               return (
                 <ChannelComponent
                   key={`channel-${rowIndex}-${colIndex}`}
-                  position={[0, getRowYPosition(rowIndex), zOffset]}
+                  position={[0, getRowYPosition(rowIndex, colIndex), zOffset]}
                   onSlotClick={(slot) => setSelectedSlot(slot !== null ? { row: rowIndex, channel: colIndex, slot } : null)}
                   selectedSlot={selectedSlot?.row === rowIndex && selectedSlot?.channel === colIndex ? selectedSlot.slot : null}
                 />
@@ -319,7 +389,7 @@ function App() {
           {channelZOffsets.map((zOffset, colIndex) => {
             const columnRows = getColumnRows(colIndex)
             return (
-              <Html key={`row-btn-${colIndex}`} position={[6, getRowYPosition(columnRows) + 0.2, zOffset]} center zIndexRange={[1000, 0]}>
+              <Html key={`row-btn-${colIndex}`} position={[6, getColumnTopY(colIndex) + 0.2, zOffset]} center zIndexRange={[1000, 0]}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <div
                     onClick={() => handleAddRowClick(colIndex)}
@@ -359,7 +429,7 @@ function App() {
           })}
 
           {/* Add/Remove Channel buttons - at the end of the row (left side) */}
-          <Html position={[6, getRowYPosition(0), getChannelZOffset(numChannels)]} center zIndexRange={[1000, 0]}>
+          <Html position={[6, getRowYPosition(0, 0), getChannelZOffset(numChannels)]} center zIndexRange={[1000, 0]}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
               <div
                 onClick={handleAddChannelClick}
@@ -412,6 +482,74 @@ function App() {
             </Html>
           ))}
 
+          {/* Swap Channel Type buttons - bottom-right corner of each channel cell */}
+          {channelZOffsets.map((zOffset, colIndex) =>
+            Array.from({ length: getColumnRows(colIndex) }, (_, rowIndex) => (
+              <Html
+                key={`swap-${rowIndex}-${colIndex}`}
+                position={[
+                  6,
+                  getRowYPosition(rowIndex) - CHANNEL_HEIGHT / 2 + 0.05,
+                  zOffset - CHANNEL_TYPES[getChannelType(rowIndex, colIndex)].width / 2 + 0.1
+                ]}
+                center
+                zIndexRange={[500, 0]}
+              >
+                <div
+                  onClick={() => handleSwapChannelClick(rowIndex, colIndex)}
+                  title={`Replace ${getChannelType(rowIndex, colIndex)}`}
+                  style={{
+                    background: '#607d8b',
+                    color: 'white',
+                    padding: '2px 7px',
+                    borderRadius: '4px',
+                    fontSize: '13px',
+                    fontWeight: 'bold',
+                    cursor: 'pointer',
+                    border: '1px solid #37474f',
+                    userSelect: 'none'
+                  }}
+                >
+                  ⇄
+                </div>
+              </Html>
+            ))
+          )}
+
+          {/* Height buttons - bottom-left corner of each channel cell */}
+          {channelZOffsets.map((zOffset, colIndex) =>
+            Array.from({ length: getColumnRows(colIndex) }, (_, rowIndex) => (
+              <Html
+                key={`height-${rowIndex}-${colIndex}`}
+                position={[
+                  6,
+                  getRowYPosition(rowIndex) - CHANNEL_HEIGHT / 2 + 0.05,
+                  zOffset + CHANNEL_TYPES[getChannelType(rowIndex, colIndex)].width / 2 - 0.1
+                ]}
+                center
+                zIndexRange={[500, 0]}
+              >
+                <div
+                  onClick={() => handleHeightButtonClick(rowIndex, colIndex)}
+                  title="Set channel height"
+                  style={{
+                    background: '#455a64',
+                    color: 'white',
+                    padding: '2px 6px',
+                    borderRadius: '4px',
+                    fontSize: '11px',
+                    cursor: 'pointer',
+                    border: '1px solid #263238',
+                    userSelect: 'none',
+                    whiteSpace: 'nowrap'
+                  }}
+                >
+                  {getChannelHeightCm(rowIndex, colIndex)}cm
+                </div>
+              </Html>
+            ))
+          )}
+
           {/* Dynamic boxes */}
           {boxes.map((box) => (
             <SlotBox key={box.id} position={getBoxPosition(box)} size={box.size} />
@@ -433,11 +571,97 @@ function App() {
         selectedSlot={selectedSlot}
         numChannels={numChannels}
         channelTypes={channelTypes}
+        selectedChannelHeightCm={selectedSlot !== null ? getChannelHeightCm(selectedSlot.row, selectedSlot.channel) : 7}
+        getChannelHeightCm={getChannelHeightCm}
         savedLayouts={savedLayouts}
         onSaveLayout={handleSaveLayout}
         onLoadLayout={handleLoadLayout}
         onDeleteLayout={handleDeleteLayout}
       />
+
+      {/* Channel Height Edit Modal */}
+      {pendingHeightEdit && (
+        <div style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 99999
+        }}>
+          <div style={{
+            background: 'white',
+            padding: '24px',
+            borderRadius: '8px',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
+            minWidth: '280px'
+          }}>
+            <h3 style={{ margin: '0 0 8px 0', color: 'black' }}>Set Channel Height</h3>
+            <p style={{ margin: '0 0 16px 0', color: '#666', fontSize: '13px' }}>
+              Channel {String.fromCharCode(65 + (pendingHeightEdit.column || 0))}{(pendingHeightEdit.row || 0) + 1}
+            </p>
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', marginBottom: '6px', color: 'black', fontSize: '13px' }}>
+                Height (cm):
+              </label>
+              <input
+                type="number"
+                value={heightInputValue}
+                onChange={(e) => setHeightInputValue(e.target.value)}
+                step="0.5"
+                min="1"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleConfirmHeightEdit()
+                  if (e.key === 'Escape') setPendingHeightEdit(null)
+                }}
+                style={{
+                  width: '100%',
+                  padding: '8px',
+                  borderRadius: '4px',
+                  border: '1px solid #ccc',
+                  boxSizing: 'border-box',
+                  fontSize: '16px'
+                }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={handleConfirmHeightEdit}
+                disabled={!(parseFloat(heightInputValue) > 0)}
+                style={{
+                  flex: 1,
+                  padding: '10px',
+                  background: parseFloat(heightInputValue) > 0 ? '#4CAF50' : '#ccc',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: parseFloat(heightInputValue) > 0 ? 'pointer' : 'not-allowed',
+                  fontSize: '14px'
+                }}
+              >
+                Set Height
+              </button>
+              <button
+                onClick={() => setPendingHeightEdit(null)}
+                style={{
+                  flex: 1,
+                  padding: '10px',
+                  background: '#f5f5f5',
+                  color: '#666',
+                  border: '1px solid #ddd',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '14px'
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Channel Type Selection Modal */}
       {pendingChannelType && (
@@ -463,14 +687,16 @@ function App() {
             <h3 style={{ margin: '0 0 16px 0', color: 'black' }}>
               {pendingChannelType?.type === 'column'
                 ? 'Add New Column'
-                : `Add Row to Column ${String.fromCharCode(65 + (pendingChannelType?.column || 0))}`}
+                : pendingChannelType?.type === 'replace'
+                  ? `Replace Channel ${String.fromCharCode(65 + (pendingChannelType?.column || 0))}${(pendingChannelType?.row || 0) + 1}`
+                  : `Add Row to Column ${String.fromCharCode(65 + (pendingChannelType?.column || 0))}`}
             </h3>
             <p style={{ margin: '0 0 16px 0', color: '#666', fontSize: '14px' }}>
               Choose the channel type:
             </p>
             <div style={{ display: 'flex', gap: '12px', flexDirection: 'column' }}>
               <button
-                onClick={() => pendingChannelType?.type === 'column' ? handleConfirmAddChannel('1-slot') : handleConfirmAddRow('1-slot')}
+                onClick={() => handleConfirmChannelType('1-slot')}
                 style={{
                   padding: '12px 20px',
                   background: '#795548',
@@ -484,8 +710,8 @@ function App() {
               >
                 1-Slot Channel (140mm full width)
               </button>
-               <button
-                onClick={() => pendingChannelType?.type === 'column' ? handleConfirmAddChannel('2-slot') : handleConfirmAddRow('2-slot')}
+              <button
+                onClick={() => handleConfirmChannelType('2-slot')}
                 style={{
                   padding: '12px 20px',
                   background: '#ff5722',
@@ -500,7 +726,7 @@ function App() {
                 2-Slot Channel (68mm slots)
               </button>
               <button
-                onClick={() => pendingChannelType?.type === 'column' ? handleConfirmAddChannel('3-slot') : handleConfirmAddRow('3-slot')}
+                onClick={() => handleConfirmChannelType('3-slot')}
                 style={{
                   padding: '12px 20px',
                   background: '#009688',
@@ -515,7 +741,7 @@ function App() {
                 3-Slot Channel (45mm slots)
               </button>
               <button
-                onClick={() => pendingChannelType?.type === 'column' ? handleConfirmAddChannel('4-slot') : handleConfirmAddRow('4-slot')}
+                onClick={() => handleConfirmChannelType('4-slot')}
                 style={{
                   padding: '12px 20px',
                   background: '#2196f3',
@@ -530,7 +756,7 @@ function App() {
                 4-Slot Channel (34mm slots)
               </button>
               <button
-                onClick={() => pendingChannelType?.type === 'column' ? handleConfirmAddChannel('5-slot') : handleConfirmAddRow('5-slot')}
+                onClick={() => handleConfirmChannelType('5-slot')}
                 style={{
                   padding: '12px 20px',
                   background: '#9c27b0',
